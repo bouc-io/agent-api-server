@@ -1,0 +1,196 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+model Assignment {
+  id          String   @id @default(uuid())
+  title       String
+  created_at  DateTime @default(now()) @map("created_at")
+  updated_at  DateTime @updatedAt @map("updated_at")
+  is_archived Boolean  @default(false) @map("is_archived")
+  user_id     String   @map("user_id")
+  org_id      String?  @map("org_id")
+
+  // JSONB for flexible metadata (tags, context, etc.)
+  metadata Json? @default("{}")
+
+  // JSONB for assignment settings (enabled tools, memory settings, etc.)
+  settings Json? @default("{}")
+
+  // Vector embedding for similarity search
+  embedding Unsupported("vector(1536)")?
+
+  messages Message[]
+  runs     Run[]
+
+  @@index([updated_at(sort: Desc)])
+  @@index([org_id, user_id])
+  @@map("Assignment")
+}
+
+model Message {
+  id            String     @id @default(uuid())
+  assignment    Assignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
+  assignment_id String     @map("assignment_id")
+
+  // Role: 'user', 'assistant', 'system', or 'tool'
+  role String
+
+  content    String
+  created_at DateTime @default(now()) @map("created_at")
+
+  // Metadata for model info, token counts, etc.
+  metadata Json? @default("{}")
+
+  // Provenance: tracks source of message (run_id, tool_call_id, etc.)
+  provenance Json? @default("{}")
+
+  // Relation for trigger message (messages that triggered runs)
+  triggered_runs Run[] @relation("TriggerMessage")
+
+  @@index([assignment_id, created_at])
+  @@map("Message")
+}
+
+model Run {
+  id            String     @id @default(uuid())
+  assignment    Assignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
+  assignment_id String     @map("assignment_id")
+  user_id       String?    @map("user_id")
+  org_id        String?    @map("org_id")
+  agent_id      String     @default("default") @map("agent_id")
+
+  // Status tracking
+  status           String // 'queued', 'running', 'completed', 'failed', 'cancelled'
+  cancel_requested Boolean @default(false) @map("cancel_requested")
+
+  // Trigger message reference
+  trigger_message    Message? @relation("TriggerMessage", fields: [trigger_message_id], references: [id])
+  trigger_message_id String?  @map("trigger_message_id")
+
+  // Planner output (Phase 1 result)
+  plan Json? // { "goal": "...", "steps": [{ "id": 1, "desc": "...", "tool_intent": "..." }] }
+
+  // Context snapshot (memories used, doc IDs)
+  snapshot Json? @default("{}")
+
+  // Timestamps
+  created_at DateTime  @default(now()) @map("created_at")
+  started_at DateTime? @map("started_at")
+  ended_at   DateTime? @map("ended_at")
+  error      String?
+
+  // LLM model used for this run (captured at execution start)
+  model_name String? @map("model_name")
+
+  // Token usage (accumulated across all LLM calls in this run)
+  prompt_tokens     Int @default(0) @map("prompt_tokens")
+  completion_tokens Int @default(0) @map("completion_tokens")
+  total_tokens      Int @default(0) @map("total_tokens")
+  llm_calls         Int @default(0) @map("llm_calls")
+
+  // Relations
+  steps            RunStep[]
+  tool_calls       ToolCall[]
+  approval_requests ApprovalRequest[]
+  feedback         RunFeedback?
+
+  @@index([assignment_id, created_at(sort: Desc)])
+  @@map("Run")
+}
+
+model RunStep {
+  id         String   @id @default(uuid())
+  run        Run      @relation(fields: [run_id], references: [id], onDelete: Cascade)
+  run_id     String   @map("run_id")
+  org_id     String?  @map("org_id")
+  step_index Int      @map("step_index")
+  type       String // 'plan', 'execution', 'tool_call'
+  input      Json? // LLM prompt/context
+  output     Json? // LLM response
+  created_at DateTime @default(now()) @map("created_at")
+
+  @@index([run_id, step_index])
+  @@map("RunStep")
+}
+
+model ToolCall {
+  id          String    @id @default(uuid())
+  run         Run       @relation(fields: [run_id], references: [id], onDelete: Cascade)
+  run_id      String    @map("run_id")
+  org_id      String?   @map("org_id")
+  tool_name   String    @map("tool_name")
+  tool_input  Json      @map("tool_input")
+  tool_output Json?     @map("tool_output")
+  status      String // 'pending', 'running', 'completed', 'failed'
+  created_at  DateTime  @default(now()) @map("created_at")
+  ended_at    DateTime? @map("ended_at")
+  duration_ms Int?      @map("duration_ms")
+
+  @@index([run_id, created_at])
+  @@map("ToolCall")
+}
+
+model ApprovalRequest {
+  id         String    @id @default(uuid())
+  run        Run       @relation(fields: [run_id], references: [id], onDelete: Cascade)
+  run_id     String    @map("run_id")
+  tool_name  String    @map("tool_name")
+  tool_args  Json      @map("tool_args")
+  // 'pending' | 'approved' | 'rejected'
+  status     String    @default("pending")
+  decided_by String?   @map("decided_by")
+  reason     String?
+  created_at DateTime  @default(now()) @map("created_at")
+  decided_at DateTime? @map("decided_at")
+
+  @@index([run_id, created_at])
+  @@map("ApprovalRequest")
+}
+
+model RunFeedback {
+  id         String   @id @default(uuid())
+  run        Run      @relation(fields: [run_id], references: [id], onDelete: Cascade)
+  run_id     String   @unique @map("run_id")
+  rating     String   // 'positive' | 'negative'
+  comment    String?
+  created_at DateTime @default(now()) @map("created_at")
+
+  @@map("RunFeedback")
+}
+
+model Tool {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  schema      Json? // JSON Schema for tool parameters
+  policy      Json?    @default("{}") // Approval requirements, rate limits, etc.
+  enabled     Boolean  @default(true)
+  // When true, the executor pauses and signals the CLI to run this tool locally
+  requires_client_execution Boolean @default(false) @map("requires_client_execution")
+  created_at  DateTime @default(now()) @map("created_at")
+  updated_at  DateTime @updatedAt @map("updated_at")
+
+  @@map("Tool")
+}
+
+
+model Scratchpad {
+  id            String   @id @default(uuid())
+  assignment_id String   @map("assignment_id")
+  key           String
+  content       String
+  created_at    DateTime @default(now()) @map("created_at")
+  updated_at    DateTime @updatedAt @map("updated_at")
+
+  @@unique([assignment_id, key])
+  @@index([assignment_id])
+  @@map("Scratchpad")
+}
