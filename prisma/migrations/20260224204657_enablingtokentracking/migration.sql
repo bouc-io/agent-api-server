@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "Run" ADD COLUMN     "completion_tokens" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "llm_calls" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "prompt_tokens" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "total_tokens" INTEGER NOT NULL DEFAULT 0;
