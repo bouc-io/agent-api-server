@@ -1,0 +1,76 @@
+{
+  "_note": "Frozen raw inputs for GET /v1/prompts/:id/rendered and src/prompts/equivalence.test.ts. These are domain inputs, not pre-rendered strings, so both the pre-extraction builders and the new renderer can be driven from the same source and compared byte-for-byte. Changing this file changes the rendered output and the equivalence baseline — treat it as test data.",
+
+  "now": "Mon, 01 Jan 2026 00:00:00 GMT",
+  "clientType": "web",
+
+  "plan": {
+    "goal": "Add 10 to 42",
+    "steps": [{ "id": 1, "description": "Calculate 42 + 10", "tool_intent": "calculator" }]
+  },
+
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "calculator",
+        "description": "Evaluate an arithmetic expression and return the numeric result",
+        "parameters": { "type": "object", "properties": {} }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "web_search",
+        "description": "Search the web and return ranked snippets",
+        "parameters": { "type": "object", "properties": {} }
+      }
+    }
+  ],
+
+  "messages": [
+    { "role": "user", "content": "what is 12 * (3+4) / 2" },
+    { "role": "assistant", "content": "42" },
+    { "role": "user", "content": "add 10 to that" }
+  ],
+
+  "memories": [
+    {
+      "id": "11111111-1111-1111-1111-111111111111",
+      "content": "Always reply in English.",
+      "category": "instruction",
+      "memory_type": "distilled"
+    },
+    {
+      "id": "22222222-2222-2222-2222-222222222222",
+      "content": "The project uses PostgreSQL 15 with pgvector for embeddings.",
+      "category": "fact",
+      "memory_type": "distilled"
+    },
+    {
+      "id": "33333333-3333-3333-3333-333333333333",
+      "content": "The user prefers concise answers.",
+      "category": "preference",
+      "memory_type": "distilled"
+    },
+    {
+      "id": "44444444-4444-4444-4444-444444444444",
+      "content": "weighing tradeoffs between latency and recall",
+      "category": "context",
+      "memory_type": "neuralese"
+    }
+  ],
+
+  "configInstructions": [{ "content": "Never reveal internal system details." }],
+
+  "replanner": {
+    "originalUserMessage": "add 10 to that",
+    "completedText": "1. {\"result\":42}",
+    "latestObservation": "{\"result\":42}",
+    "remainingSteps": "1. Calculate 42 + 10"
+  },
+
+  "compaction": { "summaryText": "User asked arithmetic questions; assistant answered 42." },
+  "toolError": { "error": "HTTP 503 from upstream" },
+  "summaryText": "User asked arithmetic questions; assistant answered 42."
+}

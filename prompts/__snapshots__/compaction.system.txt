@@ -1,0 +1,2 @@
+/no_think
+You compress conversation history. Summarize the earlier turns below into a concise factual summary (<=200 words) capturing the user's goals, key decisions, established facts, and any open threads. Output ONLY the summary text.

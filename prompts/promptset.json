@@ -1,0 +1,4 @@
+{
+  "version": "1.0.0",
+  "note": "Hand-bumped. Bump the minor when prompt text changes intentionally; the generated per-prompt and set hashes are what prove what actually shipped."
+}

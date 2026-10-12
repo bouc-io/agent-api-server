@@ -1,0 +1,1501 @@
+#### Auto-inject memories into assignment
+```
+PATCH /v1/assignments/{assignment_id}/settings
+```
+**Request body:**
+```json
+{
+  "memory_settings": {
+    "auto_retrieve": true,
+    "max_memories": 5,
+    "min_relevance": 0.75,
+    "categories": ["persona", "instruction", "preference", "fact", "context"],
+    "min_importance": "medium",
+    "prioritize_critical": true
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "assignment_id": "uuid",
+  "memory_settings": {
+    "auto_retrieve": true,
+    "max_memories": 5,
+    "min_relevance": 0.75,
+    "categories": ["persona", "instruction", "preference", "fact", "context"],
+    "min_importance": "medium",
+    "prioritize_critical": true
+  },
+  "updated_at": "2024-01-15T15:00:00Z"
+}
+```
+
+### Assignments (Conversations)
+
+#### List all assignments
+```
+GET /v1/assignments
+```
+**Query params:**
+- `page` (int): Page number (default: 1)
+- `limit` (int): Items per page (default: 20)
+- `sort` (string): Sort by field (default: "updated_at")
+- `order` (string): "asc" or "desc" (default: "desc")
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "title": "Customer Support Chat",
+      "created_at": "2024-01-05T10:30:00Z",
+      "updated_at": "2024-01-05T12:45:00Z",
+      "message_count": 15,
+      "metadata": {
+        "tags": ["support", "billing"],
+        "starred": false
+      }
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 45,
+    "total_pages": 3
+  }
+}
+```
+
+#### Create new assignment
+```
+POST /v1/assignments
+```
+**Request body:**
+```json
+{
+  "title": "New conversation",
+  "metadata": {
+    "tags": ["research"],
+    "context": "Product development"
+  }
+}
+```
+
+#### Get assignment by ID
+```
+GET /v1/assignments/{assignment_id}
+```
+**Response:**
+```json
+{
+  "id": "uuid",
+  "title": "Customer Support Chat",
+  "created_at": "2024-01-05T10:30:00Z",
+  "updated_at": "2024-01-05T12:45:00Z",
+  "message_count": 15,
+  "metadata": {
+    "tags": ["support", "billing"],
+    "starred": false
+  }
+}
+```
+
+#### Update assignment
+```
+PATCH /v1/assignments/{assignment_id}
+```
+**Request body:**
+```json
+{
+  "title": "Updated title",
+  "metadata": {
+    "starred": true
+  }
+}
+```
+
+#### Delete assignment
+```
+DELETE /v1/assignments/{assignment_id}
+```
+
+#### Archive/Unarchive assignment
+```
+POST /v1/assignments/{assignment_id}/archive
+POST /v1/assignments/{assignment_id}/unarchive
+```
+
+---
+
+### Messages
+
+#### List messages in assignment
+```
+GET /v1/assignments/{assignment_id}/messages
+```
+**Query params:**
+- `page` (int): Page number
+- `limit` (int): Messages per page
+- `before` (string): Get messages before this message ID
+- `after` (string): Get messages after this message ID
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "assignment_id": "uuid",
+      "role": "user",
+      "content": "Hello, I need help",
+      "created_at": "2024-01-05T10:30:00Z",
+      "metadata": {
+        "tokens": 5,
+        "model": null
+      }
+    },
+    {
+      "id": "uuid",
+      "assignment_id": "uuid",
+      "role": "assistant",
+      "content": "How can I help you?",
+      "created_at": "2024-01-05T10:30:15Z",
+      "metadata": {
+        "tokens": 6,
+        "model": "claude-sonnet-4-5",
+        "finish_reason": "end_turn"
+      }
+    }
+  ],
+  "pagination": {
+    "has_more": false
+  }
+}
+```
+
+#### Create message (send to agent)
+```
+POST /v1/assignments/{assignment_id}/messages
+```
+**Request body:**
+```json
+{
+  "content": "What's the weather like?",
+  "metadata": {
+    "client_id": "web-ui-v1"
+  }
+}
+```
+
+**Response:** (includes both user message and agent response)
+```json
+{
+  "user_message": {
+    "id": "uuid",
+    "role": "user",
+    "content": "What's the weather like?",
+    "created_at": "2024-01-05T10:30:00Z"
+  },
+  "assistant_message": {
+    "id": "uuid",
+    "role": "assistant",
+    "content": "I can help check the weather...",
+    "created_at": "2024-01-05T10:30:15Z",
+    "metadata": {
+      "model": "claude-sonnet-4-5",
+      "tokens": 234,
+      "finish_reason": "end_turn"
+    }
+  }
+}
+```
+
+#### Get specific message
+```
+GET /v1/messages/{message_id}
+```
+
+#### Delete message
+```
+DELETE /v1/messages/{message_id}
+```
+
+
+#### Get conversation history summary
+```
+GET /v1/assignments/{assignment_id}/summary
+```
+
+---
+
+## Error Responses
+
+All errors follow this structure:
+```json
+{
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Assignment not found",
+    "details": {
+      "assignment_id": "uuid"
+    }
+  }
+}
+```
+
+**Error codes:**
+- `INVALID_REQUEST`: 400
+- `UNAUTHORIZED`: 401
+- `FORBIDDEN`: 403
+- `NOT_FOUND`: 404
+- `RATE_LIMITED`: 429
+- `INTERNAL_ERROR`: 500
+
+---
+
+## Agent Execution System
+
+### Architecture Overview
+
+The execution system handles running code, managing tools, and iterating through agent reasoning cycles. It operates asynchronously from the REST API.
+
+```
+┌─────────────┐      ┌──────────────┐      ┌─────────────────┐
+│  REST API   │─────▶│ Message Queue│─────▶│ Agent Executor  │
+│   Server    │      │  (RabbitMQ)  │      │    Workers      │
+└─────────────┘      └──────────────┘      └─────────────────┘
+                                                    │
+                                                    ▼
+                                            ┌─────────────────┐
+                                            │  Sandbox Envs   │
+                                            │  (Docker/k8s)   │
+                                            └─────────────────┘
+```
+
+---
+
+### Execution Endpoints
+
+#### Trigger code execution
+```
+POST /v1/assignments/{assignment_id}/executions
+```
+**Request body:**
+```json
+{
+  "code": "print('Hello World')",
+  "language": "python",
+  "timeout": 30,
+  "metadata": {
+    "triggered_by": "message_id"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "execution_id": "uuid",
+  "status": "queued",
+  "created_at": "2024-01-05T10:30:00Z",
+  "estimated_wait_time": 2
+}
+```
+
+#### Get execution status
+```
+GET /v1/executions/{execution_id}
+```
+**Response:**
+```json
+{
+  "execution_id": "uuid",
+  "assignment_id": "uuid",
+  "status": "running",
+  "language": "python",
+  "created_at": "2024-01-05T10:30:00Z",
+  "started_at": "2024-01-05T10:30:02Z",
+  "completed_at": null,
+  "result": null,
+  "error": null,
+  "steps": [
+    {
+      "step_id": "uuid",
+      "type": "code_execution",
+      "status": "completed",
+      "started_at": "2024-01-05T10:30:02Z",
+      "completed_at": "2024-01-05T10:30:05Z",
+      "output": "Hello World\n",
+      "exit_code": 0
+    }
+  ]
+}
+```
+
+**Status values:**
+- `queued`: Waiting in queue
+- `running`: Currently executing
+- `completed`: Finished successfully
+- `failed`: Execution failed
+- `timeout`: Exceeded time limit
+- `cancelled`: User cancelled
+
+#### Stream execution output
+```
+GET /v1/executions/{execution_id}/stream
+```
+**Response:** SSE stream
+```
+event: output
+data: {"type": "stdout", "content": "Starting...\n"}
+
+event: output
+data: {"type": "stdout", "content": "Processing data...\n"}
+
+event: completed
+data: {"exit_code": 0, "duration": 3.2}
+```
+
+#### Cancel execution
+```
+POST /v1/executions/{execution_id}/cancel
+```
+
+#### List executions for assignment
+```
+GET /v1/assignments/{assignment_id}/executions
+```
+
+---
+
+### Agent Reasoning Cycle
+
+The agent operates in a loop, making decisions and executing actions until it reaches a conclusion.
+
+#### Start agent cycle
+```
+POST /v1/assignments/{assignment_id}/agent/cycle
+```
+**Request body:**
+```json
+{
+  "user_message": "Analyze this CSV and create a visualization",
+  "max_iterations": 10,
+  "tools_enabled": ["code_execution", "file_system", "web_search"]
+}
+```
+
+**Response:**
+```json
+{
+  "cycle_id": "uuid",
+  "status": "running",
+  "current_iteration": 0,
+  "max_iterations": 10
+}
+```
+
+#### Get cycle status
+```
+GET /v1/agent/cycles/{cycle_id}
+```
+**Response:**
+```json
+{
+  "cycle_id": "uuid",
+  "assignment_id": "uuid",
+  "status": "running",
+  "current_iteration": 3,
+  "max_iterations": 10,
+  "started_at": "2024-01-05T10:30:00Z",
+  "iterations": [
+    {
+      "iteration": 1,
+      "reasoning": "I need to first examine the CSV file structure",
+      "action": {
+        "type": "code_execution",
+        "code": "import pandas as pd\ndf = pd.read_csv('data.csv')\nprint(df.head())",
+        "language": "python"
+      },
+      "observation": "Successfully loaded CSV with 1000 rows and 5 columns",
+      "completed_at": "2024-01-05T10:30:15Z"
+    },
+    {
+      "iteration": 2,
+      "reasoning": "Now I'll create a visualization of the data",
+      "action": {
+        "type": "code_execution",
+        "code": "import matplotlib.pyplot as plt\n...",
+        "language": "python"
+      },
+      "observation": "Chart saved to output.png",
+      "completed_at": "2024-01-05T10:30:45Z"
+    },
+    {
+      "iteration": 3,
+      "reasoning": "Task completed, presenting results to user",
+      "action": {
+        "type": "final_answer",
+        "content": "I've analyzed the CSV and created a visualization..."
+      },
+      "observation": null,
+      "completed_at": "2024-01-05T10:31:00Z"
+    }
+  ],
+  "final_result": {
+    "answer": "I've analyzed the CSV...",
+    "artifacts": [
+      {
+        "type": "image",
+        "url": "/v1/artifacts/uuid/output.png"
+      }
+    ]
+  }
+}
+```
+
+#### Stream cycle progress
+```
+GET /v1/agent/cycles/{cycle_id}/stream
+```
+**Response:** SSE stream with real-time updates
+```
+event: iteration_start
+data: {"iteration": 1, "reasoning": "I need to examine the file"}
+
+event: action_start
+data: {"type": "code_execution", "language": "python"}
+
+event: output
+data: {"content": "Loading data...\n"}
+
+event: action_complete
+data: {"status": "success", "observation": "Data loaded"}
+
+event: iteration_complete
+data: {"iteration": 1, "duration": 5.2}
+```
+
+---
+
+### Tool System
+
+Tools are capabilities the agent can use during execution cycles.
+
+#### List available tools
+```
+GET /v1/tools
+```
+**Response:**
+```json
+{
+  "tools": [
+    {
+      "name": "code_execution",
+      "description": "Execute Python, JavaScript, or shell code",
+      "enabled": true,
+      "parameters": {
+        "languages": ["python", "javascript", "bash"],
+        "max_timeout": 60
+      }
+    },
+    {
+      "name": "file_system",
+      "description": "Read and write files",
+      "enabled": true,
+      "parameters": {
+        "max_file_size": 10485760
+      }
+    },
+    {
+      "name": "web_search",
+      "description": "Search the web for information",
+      "enabled": true
+    }
+  ]
+}
+```
+
+#### Enable/disable tools for assignment
+```
+PATCH /v1/assignments/{assignment_id}/tools
+```
+**Request body:**
+```json
+{
+  "enabled_tools": ["code_execution", "file_system"]
+}
+```
+
+---
+
+### Sandbox Management
+
+#### List active sandboxes
+```
+GET /v1/sandboxes
+```
+
+#### Get sandbox details
+```
+GET /v1/sandboxes/{sandbox_id}
+```
+**Response:**
+```json
+{
+  "sandbox_id": "uuid",
+  "assignment_id": "uuid",
+  "status": "running",
+  "language": "python",
+  "created_at": "2024-01-05T10:30:00Z",
+  "expires_at": "2024-01-05T11:30:00Z",
+  "resources": {
+    "cpu_usage": 0.15,
+    "memory_mb": 256,
+    "disk_mb": 100
+  },
+  "files": [
+    {
+      "path": "/workspace/data.csv",
+      "size": 102400
+    }
+  ]
+}
+```
+
+#### Upload file to sandbox
+```
+POST /v1/sandboxes/{sandbox_id}/files
+```
+**Multipart form data**
+
+#### Download file from sandbox
+```
+GET /v1/sandboxes/{sandbox_id}/files/{file_path}
+```
+
+#### Reset sandbox
+```
+POST /v1/sandboxes/{sandbox_id}/reset
+```
+
+#### Terminate sandbox
+```
+DELETE /v1/sandboxes/{sandbox_id}
+```
+
+---
+
+### Execution System Implementation
+
+#### Worker Process Flow
+
+```python
+# Pseudocode for agent executor worker
+
+while True:
+    message = message_queue.get()
+    
+    cycle = AgentCycle(
+        assignment_id=message.assignment_id,
+        max_iterations=10
+    )
+    
+    for iteration in range(cycle.max_iterations):
+        # 1. Agent reasoning
+        response = llm.generate(
+            conversation_history=get_messages(assignment_id),
+            tools=get_enabled_tools(),
+            system_prompt=get_system_prompt()
+        )
+        
+        # 2. Parse agent decision
+        if response.is_final_answer():
+            cycle.complete(response.content)
+            break
+        
+        if response.has_tool_call():
+            # 3. Execute tool
+            tool_result = execute_tool(
+                tool_name=response.tool_name,
+                tool_input=response.tool_input,
+                sandbox_id=cycle.sandbox_id
+            )
+            
+            # 4. Store observation
+            cycle.add_iteration(
+                reasoning=response.reasoning,
+                action=response.tool_call,
+                observation=tool_result
+            )
+            
+            # 5. Continue to next iteration
+            continue
+    
+    # Save final result
+    save_cycle_result(cycle)
+    notify_client(cycle)
+```
+
+#### Sandbox Isolation
+
+Each execution runs in an isolated environment:
+
+```yaml
+# Docker container config
+container:
+  image: agent-sandbox:python-3.11
+  limits:
+    cpu: "1"
+    memory: "512Mi"
+    timeout: 60s
+  network: isolated
+  volumes:
+    - /workspace (ephemeral)
+  security:
+    - no-network (optional)
+    - read-only-root
+```
+
+---
+
+### Integration with REST API
+
+#### Message Creation with Agent Execution
+
+When a user sends a message, the flow is:
+
+1. **REST API receives message** → Saves to database
+2. **Publishes to message queue** → `{assignment_id, message_id}`
+3. **Worker picks up job** → Starts agent cycle
+4. **Agent iterates** → Uses tools, executes code
+5. **Worker streams updates** → Via WebSocket or SSE
+6. **Completion** → Saves assistant message, notifies client
+
+#### Client Integration Example
+
+```javascript
+// Client creates message
+const response = await fetch('/v1/assignments/123/messages', {
+  method: 'POST',
+  body: JSON.stringify({
+    content: 'Analyze this dataset'
+  })
+});
+
+const { cycle_id } = await response.json();
+
+// Stream agent progress
+const eventSource = new EventSource(
+  `/v1/agent/cycles/${cycle_id}/stream`
+);
+
+eventSource.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  
+  if (data.type === 'iteration_start') {
+    console.log('Agent thinking:', data.reasoning);
+  } else if (data.type === 'output') {
+    console.log('Output:', data.content);
+  } else if (data.type === 'cycle_complete') {
+    console.log('Done:', data.final_result);
+    eventSource.close();
+  }
+};
+```
+
+---
+
+### Execution Database Schema
+
+```sql
+-- Execution cycles
+CREATE TABLE agent_cycles (
+    id UUID PRIMARY KEY,
+    assignment_id UUID REFERENCES assignments(id),
+    status VARCHAR(20),
+    current_iteration INT,
+    max_iterations INT,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    final_result JSONB
+);
+
+-- Individual iterations within a cycle
+CREATE TABLE cycle_iterations (
+    id UUID PRIMARY KEY,
+    cycle_id UUID REFERENCES agent_cycles(id),
+    iteration_number INT,
+    reasoning TEXT,
+    action JSONB,
+    observation TEXT,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+-- Code executions
+CREATE TABLE executions (
+    id UUID PRIMARY KEY,
+    cycle_iteration_id UUID REFERENCES cycle_iterations(id),
+    assignment_id UUID REFERENCES assignments(id),
+    language VARCHAR(50),
+    code TEXT,
+    status VARCHAR(20),
+    output TEXT,
+    error TEXT,
+    exit_code INT,
+    sandbox_id UUID,
+    created_at TIMESTAMP,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+-- Sandboxes
+CREATE TABLE sandboxes (
+    id UUID PRIMARY KEY,
+    assignment_id UUID REFERENCES assignments(id),
+    container_id VARCHAR(255),
+    language VARCHAR(50),
+    status VARCHAR(20),
+    created_at TIMESTAMP,
+    expires_at TIMESTAMP
+);
+```
+
+---
+
+## Memory System
+
+The memory system enables the agent to retain and retrieve knowledge across assignments, creating a persistent knowledge base.
+
+### Memory Architecture
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   Assignment    │────▶│  Memory System   │────▶│ Vector Database │
+│   (Current)     │     │  (Extraction &   │     │   (Embeddings)  │
+│                 │     │   Retrieval)     │     │                 │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+                               │                          │
+                               ▼                          ▼
+                        ┌──────────────┐          ┌─────────────┐
+                        │  Graph Store │          │  Search API │
+                        │ (Relations)  │          │             │
+                        └──────────────┘          └─────────────┘
+```
+
+---
+
+### Memory Endpoints
+
+#### Create memory
+```
+POST /v1/memories
+```
+**Request body:**
+```json
+{
+  "content": "User prefers Python over JavaScript for data analysis",
+  "type": "preference",
+  "metadata": {
+    "category": "programming",
+    "confidence": 0.9,
+    "source_assignment_id": "uuid",
+    "source_message_id": "uuid"
+  },
+  "tags": ["python", "preferences", "data-science"]
+}
+```
+
+**Response:**
+```json
+{
+  "memory_id": "uuid",
+  "content": "User prefers Python over JavaScript for data analysis",
+  "type": "preference",
+  "created_at": "2024-01-05T10:30:00Z",
+  "access_count": 0,
+  "last_accessed_at": null,
+  "embedding_id": "vec_uuid"
+}
+```
+
+**Memory types:**
+- `preference`: User preferences and likes/dislikes
+- `fact`: Factual information about the user or their context
+- `skill`: User's skills, expertise, or knowledge areas
+- `goal`: Long-term goals or objectives
+- `context`: Contextual information (work, projects, etc.)
+- `instruction`: Standing instructions or rules
+- `entity`: Named entities (people, places, companies)
+- `relationship`: Relationships between entities
+
+#### Get memory by ID
+```
+GET /v1/memories/{memory_id}
+```
+
+#### List all memories
+```
+GET /v1/memories
+```
+**Query params:**
+- `type` (string): Filter by memory type
+- `tags` (string): Comma-separated tags
+- `search` (string): Full-text search
+- `limit` (int): Results per page (default: 50)
+- `sort` (string): Sort by field (default: "created_at")
+- `order` (string): "asc" or "desc" (default: "desc")
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "memory_id": "uuid",
+      "content": "User prefers Python over JavaScript",
+      "type": "preference",
+      "tags": ["python", "preferences"],
+      "created_at": "2024-01-05T10:30:00Z",
+      "updated_at": "2024-01-05T10:30:00Z",
+      "access_count": 5,
+      "last_accessed_at": "2024-01-05T12:00:00Z",
+      "relevance_score": 0.95
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 50,
+    "total": 127
+  }
+}
+```
+
+#### Update memory
+```
+PATCH /v1/memories/{memory_id}
+```
+**Request body:**
+```json
+{
+  "content": "Updated content",
+  "tags": ["new", "tags"],
+  "metadata": {
+    "confidence": 0.95
+  }
+}
+```
+
+#### Delete memory
+```
+DELETE /v1/memories/{memory_id}
+```
+
+---
+
+### Semantic Search
+
+#### Search memories by similarity
+```
+POST /v1/memories/search
+```
+**Request body:**
+```json
+{
+  "query": "What programming languages does the user know?",
+  "limit": 10,
+  "min_relevance": 0.7,
+  "filters": {
+    "types": ["preference", "skill"],
+    "tags": ["programming"]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "memory_id": "uuid",
+      "content": "User is proficient in Python and JavaScript",
+      "type": "skill",
+      "relevance_score": 0.92,
+      "created_at": "2024-01-05T10:30:00Z",
+      "metadata": {
+        "source_assignment_id": "uuid"
+      }
+    },
+    {
+      "memory_id": "uuid",
+      "content": "User prefers Python for data analysis",
+      "type": "preference",
+      "relevance_score": 0.87,
+      "created_at": "2024-01-04T15:20:00Z"
+    }
+  ],
+  "query_embedding_id": "vec_uuid"
+}
+```
+
+---
+
+### Memory Retrieval for Assignments
+
+#### Get relevant memories for current context
+```
+POST /v1/assignments/{assignment_id}/memories/retrieve
+```
+**Request body:**
+```json
+{
+  "context": "User is asking about building a web scraper",
+  "limit": 5,
+  "include_types": ["preference", "skill", "fact"]
+}
+```
+
+**Response:**
+```json
+{
+  "memories": [
+    {
+      "memory_id": "uuid",
+      "content": "User is proficient in Python",
+      "type": "skill",
+      "relevance_score": 0.88
+    },
+    {
+      "memory_id": "uuid",
+      "content": "User has experience with BeautifulSoup library",
+      "type": "fact",
+      "relevance_score": 0.85
+    }
+  ],
+  "context_summary": "User has Python skills and web scraping experience"
+}
+```
+
+#### Auto-inject memories into assignment
+```
+PATCH /v1/assignments/{assignment_id}/settings
+```
+**Request body:**
+```json
+{
+  "memory_settings": {
+    "auto_retrieve": true,
+    "max_memories": 5,
+    "min_relevance": 0.75,
+    "memory_types": ["preference", "skill", "context"]
+  }
+}
+```
+
+---
+
+### Memory Extraction
+
+#### Extract memories from assignment
+```
+POST /v1/assignments/{assignment_id}/memories/extract
+```
+**Request body:**
+```json
+{
+  "message_range": {
+    "start_message_id": "uuid",
+    "end_message_id": "uuid"
+  },
+  "extraction_prompt": "Extract user preferences, skills, and important facts",
+  "auto_save": true
+}
+```
+
+**Response:**
+```json
+{
+  "extraction_id": "uuid",
+  "status": "processing",
+  "estimated_time": 15
+}
+```
+
+#### Get extraction results
+```
+GET /v1/memories/extractions/{extraction_id}
+```
+**Response:**
+```json
+{
+  "extraction_id": "uuid",
+  "status": "completed",
+  "assignment_id": "uuid",
+  "extracted_memories": [
+    {
+      "content": "User works as a data scientist at TechCorp",
+      "type": "context",
+      "confidence": 0.95,
+      "saved": true,
+      "memory_id": "uuid"
+    },
+    {
+      "content": "User prefers visualization with matplotlib",
+      "type": "preference",
+      "confidence": 0.88,
+      "saved": true,
+      "memory_id": "uuid"
+    }
+  ],
+  "completed_at": "2024-01-05T10:45:00Z"
+}
+```
+
+#### Batch extract from multiple assignments
+```
+POST /v1/memories/extract/batch
+```
+**Request body:**
+```json
+{
+  "assignment_ids": ["uuid1", "uuid2", "uuid3"],
+  "date_range": {
+    "from": "2024-01-01T00:00:00Z",
+    "to": "2024-01-05T23:59:59Z"
+  }
+}
+```
+
+---
+
+### Memory Collections
+
+Group related memories into collections for organization.
+
+#### Create collection
+```
+POST /v1/memories/collections
+```
+**Request body:**
+```json
+{
+  "name": "Work Preferences",
+  "description": "User's work-related preferences and context",
+  "memory_ids": ["uuid1", "uuid2"]
+}
+```
+
+#### List collections
+```
+GET /v1/memories/collections
+```
+
+#### Get collection with memories
+```
+GET /v1/memories/collections/{collection_id}
+```
+
+#### Add memories to collection
+```
+POST /v1/memories/collections/{collection_id}/memories
+```
+**Request body:**
+```json
+{
+  "memory_ids": ["uuid3", "uuid4"]
+}
+```
+
+---
+
+### Memory Relations
+
+Model relationships between memories (entity graph).
+
+#### Create relation
+```
+POST /v1/memories/relations
+```
+**Request body:**
+```json
+{
+  "source_memory_id": "uuid1",
+  "target_memory_id": "uuid2",
+  "relation_type": "related_to",
+  "metadata": {
+    "strength": 0.8,
+    "description": "Both relate to Python programming"
+  }
+}
+```
+
+**Relation types:**
+- `related_to`: General relation
+- `contradicts`: Conflicting information
+- `supersedes`: Newer info replaces old
+- `supports`: Reinforces another memory
+- `derives_from`: Inferred from another memory
+
+#### Get memory relations
+```
+GET /v1/memories/{memory_id}/relations
+```
+**Response:**
+```json
+{
+  "memory_id": "uuid",
+  "relations": [
+    {
+      "relation_id": "uuid",
+      "target_memory": {
+        "memory_id": "uuid2",
+        "content": "User knows pandas library"
+      },
+      "relation_type": "related_to",
+      "strength": 0.8
+    }
+  ]
+}
+```
+
+#### Get memory graph
+```
+GET /v1/memories/graph
+```
+**Query params:**
+- `root_memory_id` (string): Starting point
+- `depth` (int): How many hops (default: 2)
+- `relation_types` (string): Filter by types
+
+**Response:**
+```json
+{
+  "nodes": [
+    {
+      "memory_id": "uuid1",
+      "content": "User knows Python",
+      "type": "skill"
+    },
+    {
+      "memory_id": "uuid2",
+      "content": "User knows pandas",
+      "type": "skill"
+    }
+  ],
+  "edges": [
+    {
+      "source": "uuid1",
+      "target": "uuid2",
+      "relation_type": "related_to",
+      "strength": 0.8
+    }
+  ]
+}
+```
+
+---
+
+### Memory Analytics
+
+#### Get memory statistics
+```
+GET /v1/memories/stats
+```
+**Response:**
+```json
+{
+  "total_memories": 147,
+  "by_type": {
+    "preference": 45,
+    "skill": 32,
+    "fact": 40,
+    "context": 30
+  },
+  "most_accessed": [
+    {
+      "memory_id": "uuid",
+      "content": "User prefers Python",
+      "access_count": 23
+    }
+  ],
+  "recent_extractions": 5,
+  "storage_size_mb": 2.3
+}
+```
+
+#### Get memory timeline
+```
+GET /v1/memories/timeline
+```
+**Query params:**
+- `from` (date): Start date
+- `to` (date): End date
+- `group_by` (string): "day", "week", "month"
+
+**Response:**
+```json
+{
+  "timeline": [
+    {
+      "date": "2024-01-05",
+      "memories_created": 12,
+      "memories_accessed": 45,
+      "extractions": 2
+    }
+  ]
+}
+```
+
+---
+
+### Cross-Assignment Memory Integration
+
+#### Get memories from related assignments
+```
+GET /v1/assignments/{assignment_id}/related-memories
+```
+**Response:**
+```json
+{
+  "current_assignment_id": "uuid1",
+  "related_assignments": [
+    {
+      "assignment_id": "uuid2",
+      "title": "Data Analysis Project",
+      "relevance_score": 0.85,
+      "shared_memories": [
+        {
+          "memory_id": "uuid",
+          "content": "User prefers pandas for data manipulation",
+          "relevance_score": 0.92
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### Find assignments with similar context
+```
+POST /v1/assignments/similar
+```
+**Request body:**
+```json
+{
+  "reference_assignment_id": "uuid",
+  "limit": 5,
+  "min_similarity": 0.7
+}
+```
+
+---
+
+### Memory Sync & Export
+
+#### Export all memories
+```
+GET /v1/memories/export
+```
+**Query params:**
+- `format` (string): "json", "csv", "jsonl"
+
+**Response:** Download file
+
+#### Import memories
+```
+POST /v1/memories/import
+```
+**Request:** Multipart file upload
+
+#### Sync memories across devices
+```
+POST /v1/memories/sync
+```
+**Request body:**
+```json
+{
+  "last_sync_at": "2024-01-05T10:00:00Z",
+  "device_id": "device_uuid"
+}
+```
+
+**Response:**
+```json
+{
+  "new_memories": [...],
+  "updated_memories": [...],
+  "deleted_memory_ids": [...],
+  "sync_timestamp": "2024-01-05T12:00:00Z"
+}
+```
+
+---
+
+### Memory Database Schema
+
+```sql
+-- Core memories table
+CREATE TABLE memories (
+    id UUID PRIMARY KEY,
+    user_id UUID REFERENCES users(id),
+    content TEXT NOT NULL,
+    type VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    access_count INT DEFAULT 0,
+    last_accessed_at TIMESTAMP,
+    metadata JSONB,
+    embedding_id VARCHAR(255),
+    CONSTRAINT valid_memory_type CHECK (type IN (
+        'preference', 'fact', 'skill', 'goal', 
+        'context', 'instruction', 'entity', 'relationship'
+    ))
+);
+
+-- Memory tags (many-to-many)
+CREATE TABLE memory_tags (
+    memory_id UUID REFERENCES memories(id) ON DELETE CASCADE,
+    tag VARCHAR(100),
+    PRIMARY KEY (memory_id, tag)
+);
+
+-- Memory sources (link to assignments/messages)
+CREATE TABLE memory_sources (
+    id UUID PRIMARY KEY,
+    memory_id UUID REFERENCES memories(id) ON DELETE CASCADE,
+    source_type VARCHAR(50), -- 'assignment', 'message', 'manual'
+    source_id UUID,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Memory relations (graph)
+CREATE TABLE memory_relations (
+    id UUID PRIMARY KEY,
+    source_memory_id UUID REFERENCES memories(id) ON DELETE CASCADE,
+    target_memory_id UUID REFERENCES memories(id) ON DELETE CASCADE,
+    relation_type VARCHAR(50) NOT NULL,
+    strength FLOAT DEFAULT 1.0,
+    metadata JSONB,
+    created_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT no_self_relation CHECK (source_memory_id != target_memory_id)
+);
+
+-- Memory collections
+CREATE TABLE memory_collections (
+    id UUID PRIMARY KEY,
+    user_id UUID REFERENCES users(id),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Collection memberships
+CREATE TABLE collection_memories (
+    collection_id UUID REFERENCES memory_collections(id) ON DELETE CASCADE,
+    memory_id UUID REFERENCES memories(id) ON DELETE CASCADE,
+    added_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (collection_id, memory_id)
+);
+
+-- Memory extraction jobs
+CREATE TABLE memory_extractions (
+    id UUID PRIMARY KEY,
+    assignment_id UUID REFERENCES assignments(id),
+    status VARCHAR(50),
+    extracted_count INT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    completed_at TIMESTAMP,
+    metadata JSONB
+);
+
+-- Memory access log (for analytics)
+CREATE TABLE memory_access_log (
+    id UUID PRIMARY KEY,
+    memory_id UUID REFERENCES memories(id) ON DELETE CASCADE,
+    assignment_id UUID REFERENCES assignments(id),
+    accessed_at TIMESTAMP DEFAULT NOW(),
+    relevance_score FLOAT
+);
+
+-- Indexes for performance
+CREATE INDEX idx_memories_user_type ON memories(user_id, type);
+CREATE INDEX idx_memories_created_at ON memories(created_at DESC);
+CREATE INDEX idx_memories_embedding ON memories(embedding_id);
+CREATE INDEX idx_memory_tags_tag ON memory_tags(tag);
+CREATE INDEX idx_memory_sources_source ON memory_sources(source_type, source_id);
+CREATE INDEX idx_memory_relations_source ON memory_relations(source_memory_id);
+CREATE INDEX idx_memory_relations_target ON memory_relations(target_memory_id);
+```
+
+---
+
+### Memory System Implementation Notes
+
+#### Vector Database Integration
+
+Use a vector database for semantic search:
+- **Pinecone**: Managed, easy to use
+- **Weaviate**: Open-source, feature-rich
+- **Qdrant**: Fast, Rust-based
+- **pgvector**: PostgreSQL extension
+
+Example integration:
+```python
+# When creating a memory
+embedding = generate_embedding(memory.content)
+vector_db.upsert(
+    id=memory.id,
+    vector=embedding,
+    metadata={
+        "type": memory.type,
+        "tags": memory.tags,
+        "created_at": memory.created_at
+    }
+)
+
+# When searching
+query_embedding = generate_embedding(search_query)
+results = vector_db.search(
+    vector=query_embedding,
+    limit=10,
+    filter={"type": {"$in": ["preference", "skill"]}}
+)
+```
+
+#### Memory Retrieval Strategy
+
+When processing a new message in an assignment:
+
+1. **Extract context** from recent messages
+2. **Query vector DB** with context embedding
+3. **Filter and rank** by relevance + recency + access count
+4. **Inject top N memories** into system prompt
+5. **Log access** for analytics
+
+#### Automatic Memory Extraction
+
+Run extraction after conversations using LLM:
+```python
+extraction_prompt = """
+Analyze this conversation and extract:
+1. User preferences (likes, dislikes, preferred tools)
+2. User skills and expertise
+3. Important facts about the user or their context
+4. Long-term goals mentioned
+
+For each item, provide:
+- Content (the actual memory)
+- Type (preference/skill/fact/goal)
+- Confidence (0-1)
+"""
+```
+
+#### Memory Consolidation
+
+Periodically merge or update duplicate/related memories:
+- Detect similar embeddings (cosine similarity > 0.95)
+- Merge content or mark as superseding
+- Update relations accordingly

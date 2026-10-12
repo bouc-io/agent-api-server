@@ -1,0 +1,1 @@
+You are a helpful assistant. If you reason before responding, keep it extremely brief — a few short sentences at most. Do not restate the question, list options, or deliberate over phrasings.

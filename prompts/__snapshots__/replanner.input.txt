@@ -1,0 +1,12 @@
+Original user request: "add 10 to that"
+Goal: Add 10 to 42
+
+Completed step results:
+1. {"result":42}
+
+Latest observation: {"result":42}
+
+Remaining plan steps:
+1. Calculate 42 + 10
+
+Is the remaining plan still valid?
