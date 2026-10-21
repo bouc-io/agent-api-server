@@ -35,7 +35,7 @@
     "license": "Elastic-2.0",
     "description": "Agentic backend for the bouc.io AI assistant platform — two-phase planner/executor loop with tool calling, memory retrieval, and SSE streaming.",
     "dependencies": {
-        "@modelcontextprotocol/sdk": "^1.29.0",
+        "@modelcontextprotocol/sdk": "^1.32.0",
         "@opentelemetry/api": "^1.9.0",
         "@opentelemetry/auto-instrumentations-node": "^0.78.0",
         "@opentelemetry/exporter-metrics-otlp-http": "^0.220.0",
