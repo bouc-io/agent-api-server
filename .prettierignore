@@ -1,0 +1,5 @@
+# Generated Prisma client (prisma generate output, not hand-formatted)
+src/generated
+
+# Generated prompt registry (npm run prompts:build output, not hand-formatted)
+src/prompts/generated.ts
